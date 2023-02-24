@@ -22,13 +22,22 @@ variable "cidr_block" {
     description = "The CIDR block for vpc"
 }
 
-variable "vpc_azs" {
-    type        = list(string)
-    default     = ["us-east-1", "us-east-2"]
-    description = "Availability zones for vpc"
-}
 variable "public_subnets" {
-    type = list(string)
-    default = ["10.0.10.0/24", "10.0.20.0/24"]
-    description = "private subnets"
+   type = map
+   default = {
+      sub-1 = {
+         az = "use1-az1"
+         cidr = "10.0.10.0/24"
+      }
+      sub-2 = {
+         az = "use1-az2"
+         cidr = "10.0.20.0/24"
+      }
+   }
+}
+
+variable "image" {
+   type = string
+   default = "nginx:latest"
+   description = "Name and version of the image for ecs service"
 }
