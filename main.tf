@@ -36,13 +36,47 @@ resource "aws_subnet" "public_subnet" {
   }
 }
 
+resource "aws_internet_gateway" "gw" {
+  vpc_id = aws_vpc.demo_vpc.id
+
+  tags = {
+    Name = "main"
+  }
+}
+
+resource "aws_route_table" "this" {
+  vpc_id = aws_vpc.demo_vpc.id
+
+  for_each = var.public_subnets
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
+
+  tags = {
+    Name = "${var.name}-rt"
+  }
+}
+
+resource "aws_cloudwatch_log_group" "this" {
+  name = "${var.name}-log-group"
+}
+
 resource "aws_ecs_cluster" "nginx_cluster" {
   name = var.name
 
-  setting {
-    name  = "containerInsights"
-    value = "enabled"
+  configuration {
+    execute_command_configuration {
+      logging    = "OVERRIDE"
+
+      log_configuration {
+        # cloud_watch_encryption_enabled = true
+        cloud_watch_log_group_name     = aws_cloudwatch_log_group.this.name
+      }
+    }
   }
+
 }
 
 resource "aws_ecs_task_definition" "nginx" {
@@ -54,9 +88,9 @@ resource "aws_ecs_task_definition" "nginx" {
 
   container_definitions = jsonencode([
     {
-      name      = "first"
+      name      = "nginx"
       image     = var.image
-      cpu       = 10
+      cpu       = 512
       memory    = 512
       essential = true
       portMappings = [
@@ -69,32 +103,41 @@ resource "aws_ecs_task_definition" "nginx" {
   ])
 }
 
-resource "aws_ecs_service" "nginx_service" {
+resource "aws_ecs_service" "nginx" {
   name            = var.name
   cluster         = aws_ecs_cluster.nginx_cluster.id
   task_definition = aws_ecs_task_definition.nginx.arn
-  desired_count   = 3
+  desired_count   = 1
   iam_role        = aws_iam_role.nginx_role.arn
   depends_on      = [aws_iam_role_policy.nginx_policy]
+  launch_type     = "FARGATE"
 
-  ordered_placement_strategy {
-    type  = "binpack"
-    field = "cpu"
-  }
+  # network_configuration {
+  #   security_groups = aws_security_group.sg_nginx.arn
 
-  load_balancer {
-    target_group_arn = aws_lb_target_group.this.arn
-    container_name   = "mongo"
-    container_port   = 8080
-  }
+  #   for_each = aws_subnet.public_subnet
 
-  placement_constraints {
-    type       = "memberOf"
-    expression = "attribute:ecs.availability-zone in [us-west-2a, us-west-2b]"
-  }
+  #   subnets = each.key
+  # }
+
+  # ordered_placement_strategy {
+  #   type  = "binpack"
+  #   field = "cpu"
+  # }
+
+  # load_balancer {
+  #   target_group_arn = aws_lb_target_group.nginx_tg.arn
+  #   container_name   = "nginx"
+  #   container_port   = 80
+  # }
+
+  # placement_constraints {
+  #   type       = "memberOf"
+  #   expression = "attribute:ecs.availability-zone in [us-west-2a, us-west-2b]"
+  # }
 }
 
-resource "aws_lb" "test" {
+resource "aws_lb" "nginx" {
   name               = "${var.name}-lb"
   internal           = false
   load_balancer_type = "application"
@@ -103,21 +146,27 @@ resource "aws_lb" "test" {
 
   enable_deletion_protection = true
 
-  # access_logs {
-  #   bucket  = aws_s3_bucket.lb_logs.id
-  #   prefix  = "test-lb"
-  #   enabled = true
-  # }
-
   tags = {
     Environment = "${var.name}_demo"
   }
 }
 
-resource "aws_lb_target_group" "this" {
+resource "aws_lb_listener" "nginx-listener" {
+  load_balancer_arn = aws_lb.nginx.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.nginx_tg.arn
+  }
+}
+
+resource "aws_lb_target_group" "nginx_tg" {
   name     = "${var.name}-lb-tg"
   port     = 80
-  protocol = "TCP"
+  # target_type = "alb" 
+  protocol = "HTTP"
   vpc_id   = aws_vpc.demo_vpc.id
 }
 
@@ -166,9 +215,19 @@ resource "aws_iam_role_policy" "nginx_policy" {
 
 resource "aws_security_group" "sg_nginx" {
 
-  egress {
+  vpc_id      = aws_vpc.demo_vpc.id
+
+  ingress {
     from_port        = 80
     to_port          = 80
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  egress {
+    from_port        = 0
+    to_port          = 0
     protocol         = "-1"
     cidr_blocks      = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]

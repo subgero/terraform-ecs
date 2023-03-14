@@ -38,6 +38,6 @@ variable "public_subnets" {
 
 variable "image" {
    type = string
-   default = "nginx:latest"
+   default = "nginx:alpine"
    description = "Name and version of the image for ecs service"
 }
